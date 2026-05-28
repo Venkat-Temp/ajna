@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="background">#0A0A0A</color>
+    <color name="surface">#1E1E2E</color>
+    <color name="indigo">#4F46E5</color>
+    <color name="danger">#E11D48</color>
+    <color name="success">#059669</color>
+    <color name="warning">#D97706</color>
+    <color name="purple">#7C3AED</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#94A3B8</color>
+</resources>

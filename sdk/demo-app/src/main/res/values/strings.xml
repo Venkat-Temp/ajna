@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ajna</string>
+    <string name="btn_signup">Trigger Signup</string>
+    <string name="btn_login">Trigger Login</string>
+    <string name="btn_otp_fail">Trigger OTP Failure</string>
+    <string name="btn_referral">Claim Referral</string>
+    <string name="btn_wallet">Wallet Transfer</string>
+    <string name="btn_recovery">Account Recovery</string>
+</resources>
