@@ -1,0 +1,117 @@
+Mobile-First Device Intelligence & Fraud Risk Accelerator
+SCALEX Use Case Document
+
+1. Title
+Mobile-First Device Intelligence & Fraud Risk Accelerator
+2. Objective
+Build a mobile-first fraud intelligence accelerator that can capture or simulate mobile app risk signals, profile devices, analyze app behavior, detect bot-like activity, score fraud risk, and support fraud operations review.
+The solution should help digital businesses move from late-stage, reactive fraud checks to early, mobile-first risk detection across signup, login, OTP, referral, checkout, wallet, onboarding, and account recovery journeys.
+Teams should build as many meaningful capabilities as possible within the 2-3 week timeline, while keeping the solution practical, scalable, demo-ready, and close to a prospect-facing implementation.
+3. Business Context
+Mobile apps are now the primary fraud entry point for many digital businesses. Fintech apps, e-wallets, food delivery platforms, ride-hailing apps, gaming platforms, marketplaces, lending apps, subscription platforms, and superapps often face abuse before a transaction is completed.
+Fraudsters may create multiple fake accounts, reuse the same device, use emulators, tamper with apps, spoof locations, abuse referral offers, attempt OTP attacks, share accounts, perform account takeover, or automate mobile journeys using bots and device farms.
+Traditional fraud checks often happen too late, after payment failure, chargeback, manual review, promotional loss, or customer complaint. A mobile-first risk accelerator should detect early signals during app journeys and help fraud, trust and safety, product, security, and operations teams act faster.
+This solution should not be treated as only a dashboard or a GenAI assistant. It should be designed as a layered mobile fraud intelligence workflow where device signals, behavioral signals, risk scoring, alerts, and fraud operations come together in a coherent solution.
+Identity network analysis and cross-channel web support are useful advanced capabilities, but the primary focus should remain mobile-first device intelligence, mobile behavioral intelligence, mobile bot and emulator detection, fraud risk scoring, fraud operations workflow, and live scenario simulation.
+4. Sample Data Expectations
+Teams may use real, synthetic, or simulated data. The selected demo context can be fintech, e-wallet, marketplace, food delivery, ride-hailing, gaming, lending, insurance, subscription, or a similar mobile-first digital platform.
+Teams may reference concepts from platforms and standards such as SHIELD, Fingerprint, SEON, Sardine, TrustDecision, BioCatch, ThreatMetrix, DataDome, HUMAN Security, Arkose Labs, Android Play Integrity API, Apple DeviceCheck, Apple App Attest, OAuth 2.0, OpenID Connect, WebAuthn, REST APIs, webhooks, and event streams.
+Sample data may include:
+Mobile users, accounts, and profile attributes.
+Mobile devices, device identifiers, and device fingerprints.
+App install, reinstall, app launch, and device registration events.
+Signup, login, OTP request, OTP failure, and account recovery events.
+Session events, app navigation events, tap, swipe, typing, and form completion patterns.
+Referral, promo, reward, wallet, checkout, payment, or transaction events.
+Device attributes such as OS, model, manufacturer, app version, locale, timezone, and runtime state.
+Network attributes such as IP address, ASN, geolocation, VPN/proxy indicator, and risky network flag.
+Integrity indicators such as emulator, root, jailbreak, app tamper, debug mode, cloned app, or GPS spoofing flags.
+Risk scores, risk reasons, alerts, case outcomes, analyst decisions, and audit history.
+Scenario-based test data for live demo simulation.
+5. What You Need To Build
+The following capability areas represent the target direction for the solution. Teams are encouraged to cover as many as possible, with priority on building a coherent end-to-end mobile fraud workflow rather than isolated screens.
+Capability Area 1: Mobile Event Collection and Risk Signal Layer
+Build the foundational layer that captures or simulates mobile app events and risk signals. Teams do not need to build a full production-grade mobile SDK. A lightweight demo SDK, mock mobile app, API endpoint, event collector, backend ingestion service, scripted event generator, or scenario upload flow is acceptable.
+The user should be able to see mobile events flowing into the accelerator from journeys such as signup, login, OTP verification, referral claim, wallet transaction, checkout, onboarding, and account recovery. The system should clearly link each event to a device, account, session, and timestamp.
+Capability Area 2: Mobile Device Intelligence and Risk Profiling
+Build a mobile device intelligence layer that analyzes device, app, OS, runtime, and network signals. The system should create a device profile and identify whether the device is trusted, unknown, suspicious, or high-risk.
+Signals may include unique device profile, first-seen and last-seen activity, device-to-account mapping, multiple accounts on one device, one account across many devices, emulator indicators, rooted or jailbroken device indicators, app tamper indicators, debug mode, cloned app, VPN/proxy/Tor, risky network usage, location mismatch, and GPS spoofing indicators.
+Capability Area 3: Mobile Behavioral Intelligence
+Build a behavioral intelligence layer that identifies suspicious mobile app behavior during important journeys. This should generate concrete session-level risk insights rather than generic chatbot responses.
+The system may detect unusually fast form completion, copy-paste-heavy onboarding, repeated failed OTP attempts, repeated failed login attempts, rapid switching between accounts, abnormal tap or swipe patterns, suspicious navigation sequence, repeated app reinstall behavior, session velocity anomalies, and unusual account recovery behavior.
+Capability Area 4: Mobile Bot, Emulator, and Device Farm Detection
+Build a capability that detects automated or device-farm-like abuse in mobile workflows. The system should identify whether suspicious activity is isolated, bot-like, emulator-driven, or part of a larger device farm pattern.
+Examples include high-frequency signup attempts, high-frequency OTP attempts, credential stuffing-style login attempts, repeated referral claims, emulator-based account creation, many accounts using similar device or network patterns, scripted login or transaction behavior, and abnormal traffic spikes from mobile app events.
+Capability Area 5: Mobile Fraud Risk Scoring and Decision Engine
+Build a risk scoring and decision engine that combines device, behavior, network, account, and transaction signals into an explainable fraud risk score. The score should not be a black box.
+The system should support detection of fraud patterns such as fake account creation, multi-accounting, referral or promo abuse, account takeover risk, account sharing, wallet or payment fraud risk, synthetic onboarding indicators, suspicious high-value transaction attempts, repeated failed KYC or onboarding attempts, and suspicious account recovery.
+The user should see risk category, top risk reasons, contributing signals, recommended decision, suggested next action, and confidence level where applicable.
+Capability Area 6: Fraud Operations Dashboard and Case Workflow
+Build a fraud operations dashboard that allows reviewers to monitor risk, investigate issues, and take action. This capability is important because it makes the accelerator feel like a real fraud operations solution rather than only a technical detection engine.
+The dashboard should include overall mobile fraud risk summary, total devices, users, sessions and transactions, high-risk devices, high-risk accounts, high-risk app sessions, emulator/root/jailbreak/tamper indicators, bot-like activity indicators, promo or referral abuse trends, account takeover indicators, risk trend over time, case queue, recommended action, decision history, and audit trail.
+The case workflow should allow reviewers to open a risky device, user, session, or transaction; review evidence; see risk score and reasons; view related events; mark a case as allow, monitor, challenge, block, or manual review; and add notes or outcomes.
+Capability Area 7: Live Mobile Fraud Scenario Simulation - Must Have
+This is a mandatory capability. The review team should be able to provide a scenario during the demo, and the team should be able to simulate that scenario through UI controls, backend data update, event injection, API call, scripted event generator, mock mobile app action, or uploaded scenario file.
+The system must then identify what is happening and showcase the relevant events, dashboard changes, risk score updates, alerts, cases, and recommended actions. This should happen in real time or near-real time during the demo.
+Example scenarios include one emulator creating 30 accounts, a rooted Android device attempting a wallet transfer, one device claiming referrals for multiple accounts, a driver spoofing GPS location, a gaming user abusing rewards, a subscription user sharing one account across many devices, a mobile bot performing rapid OTP retries, multiple accounts using the same device and payment method, or a suspicious account recovery pattern across several users.
+Capability Area 8: Optional Adaptive Risk Response Layer
+If feasible, build an adaptive response layer that changes the recommended action based on risk level, journey type, and business impact. Example responses include allow, monitor, step-up verification, challenge, throttle, hold transaction, block reward, block account cluster, notify user, or send to manual review.
+This capability can give the team an edge because it shows the accelerator is not only detecting risk but also supporting real operational decisions.
+Capability Area 9: Optional Identity Network and Cross-Channel Web Support
+This is a good-to-have capability and should be attempted only after the core mobile capabilities are meaningful. Build a lightweight identity network that links mobile devices, accounts, sessions, IPs, locations, payment instruments, referral codes, phone numbers, email domains, app installs, transactions, and optional web browser sessions.
+Cross-channel web support may include web login activity, web checkout activity, browser fingerprint, IP and network reputation, headless browser indicators, credential stuffing attempts, account recovery from web, and mobile-to-web journey linkage. This should add investigation value without distracting from the mobile-first scope.
+6. Expected Demo Flow
+Start with the mobile fraud risk overview: Show total mobile users, devices, sessions, transactions, risky devices, risky accounts, bot-like attempts, fraud cases, and overall risk trend.
+Show the mobile event ingestion layer: Demonstrate how mobile events are captured or simulated from signup, login, OTP, referral claim, transaction, or account recovery journeys.
+Walk through a normal mobile user journey: Show a user signing up, logging in, and completing an activity with low-risk device and behavioral signals.
+Introduce suspicious mobile device behavior: Show a device that is new, reused across multiple accounts, rooted or jailbroken, running on an emulator, using VPN, spoofing location, or showing app tamper indicators.
+Show behavioral intelligence: Demonstrate abnormal app behavior such as rapid form completion, repeated OTP failures, account switching, suspicious navigation, scripted activity, or unusual session velocity.
+Generate fraud risk score: Show how the accelerator combines device, behavior, network, account, and transaction signals into an explainable risk score.
+Open fraud operations case: Show the flagged device, user, session, or transaction in the case queue. Review evidence, risk reasons, timeline, recommended action, and analyst decision options.
+Run live scenario simulation - must have: The reviewer provides a scenario during the demo. The team simulates it through UI, backend data, API call, event injection, or mock mobile app activity.
+Show real-time system response: The system identifies what is happening, updates events, changes risk scores, creates alerts or cases, and displays recommended actions.
+Show business-ready explanation: Explain what happened, why it matters, what risk was detected, what business impact it may create, and what action should be taken.
+Show optional advanced capabilities if built: Demonstrate adaptive response, identity network, or mobile-to-web linkage only if these are meaningfully implemented.
+End with value summary: Show how the accelerator can reduce fake accounts, bot abuse, promo leakage, account takeover risk, payment fraud, risky mobile transactions, and manual review effort.
+Example demo scenario: A reviewer asks the team to simulate a fraudster using an emulator and VPN to create 25 accounts, claim referral credits, and attempt wallet transactions. The expected system response is that the events are ingested, the device is flagged as high-risk, linked accounts are detected, referral abuse is identified, risk scores increase, a fraud case is created, and recommended actions are shown.
+7. Evaluation Criteria
+Criteria
+What Good Looks Like
+Mobile-first focus
+Prioritizes mobile device, app behavior, mobile session, and mobile fraud journeys rather than building a generic web fraud dashboard.
+Layered architecture
+Shows a clear flow from event ingestion to device intelligence to behavioral intelligence to scoring to fraud operations.
+Holistic coverage
+Covers multiple meaningful areas such as device profiling, behavior tracking, bot and emulator detection, risk scoring, fraud operations, and live simulation.
+Business relevance
+Clearly shows how the accelerator can reduce fake accounts, promo abuse, account takeover risk, bot activity, risky transactions, and manual review effort.
+Technical realism
+Uses realistic mobile concepts such as app events, device attributes, session telemetry, integrity flags, OTP events, referral claims, risk scores, and case queues.
+Device intelligence quality
+Demonstrates meaningful mobile device profiling, device reuse, emulator/root/jailbreak/tamper indicators, and device-to-account relationships.
+Behavioral intelligence quality
+Identifies useful app behavior patterns rather than relying only on static account or transaction data.
+Bot and emulator detection quality
+Detects automated or device-farm-like behavior and recommends suitable mitigation actions.
+Fraud scoring quality
+Produces explainable risk scores with clear factors, thresholds, decision logic, and recommended actions.
+Fraud operations workflow
+Provides a practical review experience with case queue, evidence, risk reasons, decision options, and audit trail.
+Live scenario simulation - must have
+Reviewers provide a scenario live, and the team simulates it through UI or backend data with visible system response.
+Real-time demo impact
+Dashboard, events, alerts, risk scores, cases, and recommendations update in real time or near-real time during the demo.
+Production-readiness direction
+Feels like a real, scalable accelerator that could evolve into a client-ready implementation.
+AI explanation quality
+Explains what happened, why it matters, what risk was detected, and what action should be taken without acting like a generic chatbot.
+Advanced capability quality
+If identity network or cross-channel web support is built, it adds investigation value without distracting from mobile-first scope.
+Privacy awareness
+Demonstrates PII minimization, consent awareness, data retention thinking, and responsible handling of mobile risk data.
+Scope discipline
+Achievable in 2-3 weeks while still being meaningful enough for a prospect-facing demo.
+Demo storytelling
+Presents a clear journey from mobile activity to risk detection to fraud investigation to business action.
+8. One-Line Goal
+Build a mobile-first device intelligence and fraud risk accelerator that captures mobile risk signals, profiles risky devices, detects suspicious app behavior, scores fraud risk, supports fraud operations review, proves intelligence through must-have live scenario simulation, and explains recommended actions in business-ready language.
