@@ -1,0 +1,47 @@
+# Environment / secrets
+backend/.env.sh
+**/.env
+**/.env.local
+**/.env*.local
+
+# Python
+backend/venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+*.tsbuildinfo
+
+# Android / Gradle
+sdk/.gradle/
+sdk/build/
+sdk/demo-app/.gradle/
+sdk/demo-app/build/
+sdk/ajna-sdk/.gradle/
+sdk/ajna-sdk/build/
+sdk/fraud-guard-sdk/.gradle/
+sdk/fraud-guard-sdk/build/
+*.apk
+*.aab
+*.jks
+local.properties
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# IDE
+.idea/
+*.iml
+.vscode/
