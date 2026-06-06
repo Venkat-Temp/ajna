@@ -27,11 +27,30 @@ def setup_stream():
             raise e
 
 
+def _update_device_trust(device_id: str, risk_score: int, category: str):
+    key = f"trust:{device_id}"
+    existing = r.hgetall(key)
+    old_score = float(existing.get('trust_score', 50))
+    event_count = int(existing.get('event_count', 0)) + 1
+    fraud_count = int(existing.get('fraud_count', 0)) + (1 if category == 'Fraud' else 0)
+    # EMA: alpha=0.3; higher trust_score = more risky history
+    new_trust = round(0.3 * risk_score + 0.7 * old_score, 2)
+    r.hset(key, mapping={
+        'trust_score': new_trust,
+        'event_count': event_count,
+        'fraud_count': fraud_count,
+        'last_seen': time.time(),
+        'last_category': category,
+    })
+    r.expire(key, 86400 * 30)
+
+
 def evaluate_risk(event_data):
     score = 0
     reasons = []
 
     device = event_data.get('device', {}) or {}
+    behavioral = event_data.get('behavioral', {}) or {}
     user_id = event_data.get('user_id')
     device_id = event_data.get('device_id')
     event_type = event_data.get('event_type', '')
@@ -61,27 +80,67 @@ def evaluate_risk(event_data):
         score += 15
         reasons.append("App running in debug mode")
 
+    if device.get('app_cloned'):
+        score += 25
+        reasons.append("App cloning / parallel space detected")
+
+    if device.get('has_sensors') is False:
+        score += 10
+        reasons.append("No hardware sensors (emulator or automated environment)")
+
     # ── High-Value Event on Risky Device (combo penalty) ─────────────────────
-    device_is_risky = device.get('rooted') or device.get('emulator') or device.get('gps_spoofed') or device.get('app_tamper')
+    device_is_risky = (device.get('rooted') or device.get('emulator')
+                       or device.get('gps_spoofed') or device.get('app_tamper'))
     if event_type in HIGH_VALUE_EVENTS and device_is_risky:
         score += 25
         reasons.append(f"High-value action ({event_type}) on compromised device")
 
-    # ── Behavioral Intelligence ───────────────────────────────────────────────
+    # ── Behavioral Biometrics (from Android SDK) ──────────────────────────────
+    tap_variance = float(behavioral.get('tap_cadence_variance', 999))
+    interaction_count = int(behavioral.get('interaction_count', 0))
+    if interaction_count >= 3 and tap_variance < 10:
+        score += 20
+        reasons.append(f"Bot-like touch pattern (cadence variance: {round(tap_variance, 1)}ms)")
+
+    if behavioral.get('has_sensors') is False:
+        score += 10
+        reasons.append("No sensor data in behavioral payload (automated environment)")
+
+    # ── Server-side Bot Timing Detection ─────────────────────────────────────
+    if device_id:
+        timing_key = f"vel:timing:{device_id}"
+        now_ms = int(time.time() * 1000)
+        r.rpush(timing_key, now_ms)
+        r.ltrim(timing_key, -5, -1)
+        r.expire(timing_key, 60)
+        timestamps = [int(t) for t in r.lrange(timing_key, 0, -1)]
+        if len(timestamps) >= 4:
+            deltas = [timestamps[i+1] - timestamps[i] for i in range(len(timestamps)-1)]
+            avg_delta = sum(deltas) / len(deltas)
+            if avg_delta > 0:
+                variance = sum((d - avg_delta)**2 for d in deltas) / len(deltas)
+                # Very regular sub-500ms intervals = likely automated
+                if variance < 100 and avg_delta < 500:
+                    score += 20
+                    reasons.append(f"Automated request timing (variance: {round(variance, 1)}ms²)")
+
+    # ── Behavioral Velocity ───────────────────────────────────────────────────
     if user_id:
         otp_key = f"vel:otp:{user_id}"
         login_key = f"vel:login:{user_id}"
         general_key = f"vel:user:{user_id}"
 
-        r.incr(general_key)
+        count = int(r.incr(general_key) or 0)
         if r.ttl(general_key) == -1:
             r.expire(general_key, 60)
+        if count > 3:
+            score += 20
+            reasons.append(f"High event velocity ({count} events in 60s)")
 
         if event_type == 'otp_failure':
             otp_count = int(r.incr(otp_key) or 0)
             if r.ttl(otp_key) == -1:
                 r.expire(otp_key, 120)
-
             score += 10
             if otp_count >= 6:
                 score += 55
@@ -96,7 +155,6 @@ def evaluate_risk(event_data):
             login_count = int(r.incr(login_key) or 0)
             if r.ttl(login_key) == -1:
                 r.expire(login_key, 120)
-
             score += 8
             if login_count >= 5:
                 score += 30
@@ -110,7 +168,6 @@ def evaluate_risk(event_data):
             ref_count = int(r.incr(ref_key) or 0)
             if r.ttl(ref_key) == -1:
                 r.expire(ref_key, 300)
-
             score += 10
             if ref_count >= 5:
                 score += 35
@@ -119,14 +176,32 @@ def evaluate_risk(event_data):
                 score += 15
                 reasons.append(f"Multiple referral claims: {ref_count} from same device")
 
+    # ── Device Trust History ──────────────────────────────────────────────────
+    if device_id:
+        trust_data = r.hgetall(f"trust:{device_id}")
+        if trust_data:
+            existing_trust = float(trust_data.get('trust_score', 50))
+            existing_fraud = int(trust_data.get('fraud_count', 0))
+            if existing_fraud >= 3 and existing_trust > 65:
+                score += 15
+                reasons.append(
+                    f"Known high-risk device (trust score: {round(existing_trust)}, "
+                    f"fraud events: {existing_fraud})"
+                )
+
     # ── Graph Intelligence (Neo4j) ────────────────────────────────────────────
     ip_address = event_data.get('ip')
+    email_hash = event_data.get('email_hash')
     if user_id and device_id:
-        graph_engine.update_identity_graph(user_id, device_id, ip_address)
+        graph_engine.update_identity_graph(user_id, device_id, ip_address, email_hash)
         graph_score, graph_reasons = graph_engine.get_graph_risk(user_id, device_id)
         if graph_score > 0:
             score += graph_score
             reasons.extend(graph_reasons)
+        subnet_score, subnet_reasons = graph_engine.get_subnet_risk(ip_address)
+        if subnet_score > 0:
+            score += subnet_score
+            reasons.extend(subnet_reasons)
 
     score = min(score, 100)
 
@@ -138,7 +213,7 @@ def evaluate_risk(event_data):
     else:
         category = "Safe"
 
-    # ── Structured Recommended Action (always present, not dependent on AI) ───
+    # ── Structured Recommended Action ─────────────────────────────────────────
     if score >= 61:
         recommended_action = "Block"
     elif score >= 46:
@@ -182,7 +257,7 @@ def evaluate_risk(event_data):
                 f"Recommended: {recommended_action}."
             )
 
-    return {
+    result = {
         "case_id": f"case_{uuid.uuid4().hex[:8]}",
         "event_id": event_data.get('event_id'),
         "user_id": user_id,
@@ -195,6 +270,11 @@ def evaluate_risk(event_data):
         "explanation": explanation,
         "timestamp": time.time(),
     }
+
+    if device_id:
+        _update_device_trust(device_id, score, category)
+
+    return result
 
 
 def start_worker():

@@ -26,9 +26,16 @@ object AjnaSDK {
         ingestionUrl = url
 
         val prefs = context.getSharedPreferences("ajna_prefs", Context.MODE_PRIVATE)
-        deviceId = prefs.getString("device_id", null) ?: run {
-            val id = UUID.randomUUID().toString()
-            prefs.edit().putString("device_id", id).apply()
+        deviceId = prefs.getString("device_id_v2", null)?.takeIf { it.isNotBlank() } ?: run {
+            val computed = DeviceIntelligence.getPersistentDeviceId(context)
+            val id = if (!computed.isNullOrBlank()) {
+                computed
+            } else {
+                prefs.getString("device_id_uuid_fallback", null) ?: UUID.randomUUID().toString().also { uuid ->
+                    prefs.edit().putString("device_id_uuid_fallback", uuid).apply()
+                }
+            }
+            prefs.edit().putString("device_id_v2", id).apply()
             id
         }
 
@@ -36,6 +43,8 @@ object AjnaSDK {
         Log.i(TAG, "AjnaSDK initialized — Device ID: $deviceId")
         logEvent("session_start", "anonymous")
     }
+
+    fun getDeviceId(): String = deviceId
 
     fun logEvent(eventType: String, userId: String) {
         if (!isInitialized) {
@@ -54,6 +63,7 @@ object AjnaSDK {
             put("event_type", eventType)
             put("timestamp", System.currentTimeMillis().toString())
             put("device", JSONObject(DeviceIntelligence.collectTelemetry(ctx)))
+            put("behavioral", JSONObject(BehavioralIntelligence.collectBehavioralTelemetry()))
         }
         return payload.toString()
     }

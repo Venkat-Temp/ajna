@@ -6,10 +6,28 @@ import {
   ActivitySquare, AlertTriangle, Fingerprint, Sparkles,
   CheckCircle2, Eye, ShieldQuestion, Ban, Play, Users, MapPin,
   Share2, Loader2, CreditCard, Network, Cpu, Zap, ClipboardList,
-  History, TrendingUp, User, Server,
+  History, TrendingUp, User, Server, Download, Settings, Bot,
+  Copy, ToggleLeft, ToggleRight,
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+interface Policy {
+  id: string;
+  name: string;
+  signal: string;
+  operator: string;
+  value: boolean | number | string;
+  score_delta: number;
+  enabled: boolean;
+}
+
+interface DeviceTrust {
+  trust_score: number;
+  event_count: number;
+  fraud_count: number;
+  last_category: string;
+}
 
 interface RiskUpdate {
   case_id: string;
@@ -79,7 +97,7 @@ interface AccountProfile {
   topReasons: string[];
 }
 
-type Tab = "feed" | "devices" | "accounts" | "history";
+type Tab = "feed" | "devices" | "accounts" | "history" | "policies";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -121,9 +139,9 @@ function categorizeReasons(reasons: string[]) {
   const device: string[] = [], behavioral: string[] = [], identity: string[] = [];
   for (const r of reasons) {
     const l = r.toLowerCase();
-    if (l.includes("account") || l.includes("farm") || l.includes("ato") || l.includes("linked") || l.includes("devices")) {
+    if (l.includes("account") || l.includes("farm") || l.includes("ato") || l.includes("linked") || l.includes("devices") || l.includes("email") || l.includes("subnet")) {
       identity.push(r);
-    } else if (l.includes("otp") || l.includes("velocity") || l.includes("referral") || l.includes("credential") || l.includes("login fail")) {
+    } else if (l.includes("otp") || l.includes("velocity") || l.includes("referral") || l.includes("credential") || l.includes("login fail") || l.includes("bot") || l.includes("automated") || l.includes("cadence") || l.includes("timing")) {
       behavioral.push(r);
     } else {
       device.push(r);
@@ -132,17 +150,36 @@ function categorizeReasons(reasons: string[]) {
   return { device, behavioral, identity };
 }
 
+function exportCSV(data: Record<string, unknown>[], filename: string) {
+  if (!data.length) return;
+  const headers = Object.keys(data[0]);
+  const rows = data.map(row =>
+    headers.map(h => {
+      const v = row[h];
+      const s = Array.isArray(v) ? v.join("; ") : String(v ?? "");
+      return `"${s.replace(/"/g, '""')}"`;
+    }).join(",")
+  );
+  const csv = [headers.join(","), ...rows].join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = filename;
+  a.click();
+}
+
 // ─── Simulation Scenarios Config ─────────────────────────────────────────────
 
 const SCENARIOS = [
-  { id: "emulator_farm",   label: "Emulator Farm",    icon: Smartphone,    desc: "25 accounts · 1 device" },
-  { id: "otp_attack",      label: "OTP Attack",        icon: ShieldAlert,   desc: "8 OTP failures (brute-force)" },
-  { id: "referral_abuse",  label: "Referral Abuse",    icon: Users,         desc: "10 claims · same device" },
-  { id: "rooted_wallet",   label: "Rooted Wallet",     icon: Shield,        desc: "Transfer on rooted device" },
-  { id: "gps_spoofing",    label: "GPS Spoofing",      icon: MapPin,        desc: "Spoofed location login" },
-  { id: "account_sharing", label: "Account Sharing",   icon: Share2,        desc: "1 user · 4 devices" },
-  { id: "account_takeover",label: "Account Takeover",  icon: AlertTriangle, desc: "Cred stuffing + ATO" },
-  { id: "checkout_fraud",  label: "Checkout Fraud",    icon: CreditCard,    desc: "Rooted + VPN payment" },
+  { id: "emulator_farm",      label: "Emulator Farm",      icon: Smartphone,    desc: "25 accounts · 1 device" },
+  { id: "otp_attack",         label: "OTP Attack",          icon: ShieldAlert,   desc: "8 OTP failures (brute-force)" },
+  { id: "referral_abuse",     label: "Referral Abuse",      icon: Users,         desc: "10 claims · same device" },
+  { id: "rooted_wallet",      label: "Rooted Wallet",       icon: Shield,        desc: "Transfer on rooted device" },
+  { id: "gps_spoofing",       label: "GPS Spoofing",        icon: MapPin,        desc: "Spoofed location login" },
+  { id: "account_sharing",    label: "Account Sharing",     icon: Share2,        desc: "1 user · 4 devices" },
+  { id: "account_takeover",   label: "Account Takeover",    icon: AlertTriangle, desc: "Cred stuffing + ATO" },
+  { id: "checkout_fraud",     label: "Checkout Fraud",      icon: CreditCard,    desc: "Rooted + VPN payment" },
+  { id: "bot_farm",           label: "Bot Farm",            icon: Bot,           desc: "Automated bots · uniform cadence" },
+  { id: "app_cloning_abuse",  label: "App Cloning Abuse",   icon: Copy,          desc: "Cloned app · multi-account" },
 ];
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -375,7 +412,7 @@ function RiskCard({ update, pendingAction, onAction }: {
   );
 }
 
-function DeviceRow({ device }: { device: DeviceProfile }) {
+function DeviceRow({ device, trust }: { device: DeviceProfile; trust?: DeviceTrust }) {
   const scoreColor = device.maxRisk >= 61 ? "text-rose-400" : device.maxRisk >= 31 ? "text-amber-400" : "text-emerald-400";
   const borderColor = device.maxRisk >= 61 ? "border-rose-500/20 bg-rose-500/5" : device.maxRisk >= 31 ? "border-amber-500/20 bg-amber-500/5" : "border-emerald-500/20 bg-emerald-500/5";
 
@@ -388,6 +425,11 @@ function DeviceRow({ device }: { device: DeviceProfile }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5 flex-wrap mb-1">
           <span className="font-mono text-[11px] text-slate-300 truncate">{device.device_id}</span>
+          {trust && (
+            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${trust.trust_score >= 65 ? "bg-rose-500/20 text-rose-300 border-rose-500/30" : trust.trust_score >= 40 ? "bg-amber-500/20 text-amber-300 border-amber-500/30" : "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"}`}>
+              TRUST {Math.round(trust.trust_score)} · {trust.fraud_count} fraud
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-1 mb-2">
           <FlagChip show={device.isEmulator}   label="EMULATOR"  color="bg-amber-500/20 text-amber-300 border-amber-500/30" />
@@ -488,6 +530,8 @@ export default function Dashboard() {
   const [pendingAction, setPendingAction] = useState<{ caseId: string; action: string } | null>(null);
   const [trendData, setTrendData] = useState<TrendPoint[]>([]);
   const trendBucket = useRef({ safe: 0, suspicious: 0, fraud: 0 });
+  const [policies, setPolicies] = useState<Policy[]>([]);
+  const [deviceTrustScores, setDeviceTrustScores] = useState<Record<string, DeviceTrust>>({});
 
   // ── Derived state ────────────────────────────────────────────────────────────
 
@@ -595,6 +639,36 @@ export default function Dashboard() {
     return () => ws?.close();
   }, []);
 
+  // ── Fetch policies on mount ───────────────────────────────────────────────────
+  useEffect(() => {
+    fetch("http://localhost:8000/api/v1/policies")
+      .then(r => r.json())
+      .then(d => setPolicies(d.policies ?? []))
+      .catch(() => {});
+  }, []);
+
+  // ── Fetch device trust scores when devices tab is active ──────────────────────
+  useEffect(() => {
+    if (activeTab !== "devices") return;
+    const ids = highRiskDevices.map(d => d.device_id).slice(0, 20);
+    ids.forEach(id => {
+      fetch(`http://localhost:8000/api/v1/devices/${encodeURIComponent(id)}/trust`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setDeviceTrustScores(prev => ({ ...prev, [id]: d })); })
+        .catch(() => {});
+    });
+  }, [activeTab, highRiskDevices]);
+
+  // ── Toggle policy enabled state ───────────────────────────────────────────────
+  const togglePolicy = useCallback(async (policyId: string, enabled: boolean) => {
+    await fetch(`http://localhost:8000/api/v1/policies/${policyId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }).catch(() => {});
+    setPolicies(prev => prev.map(p => p.id === policyId ? { ...p, enabled } : p));
+  }, []);
+
   // ── Trend bucket timer (5s intervals) ────────────────────────────────────────
 
   useEffect(() => {
@@ -638,6 +712,7 @@ export default function Dashboard() {
     { id: "devices" as Tab,  label: "High-Risk Devices",    icon: Server,        count: highRiskDevices.length },
     { id: "accounts" as Tab, label: "High-Risk Accounts",   icon: Users,         count: highRiskAccounts.length },
     { id: "history" as Tab,  label: "Audit Trail",          icon: History,       count: decisions.length },
+    { id: "policies" as Tab, label: "Risk Policies",        icon: Settings,      count: policies.filter(p => p.enabled).length },
   ];
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -792,7 +867,7 @@ export default function Dashboard() {
                       <p className="text-sm">No high-risk devices detected yet</p>
                     </div>
                   ) : (
-                    highRiskDevices.map(d => <DeviceRow key={d.device_id} device={d} />)
+                    highRiskDevices.map(d => <DeviceRow key={d.device_id} device={d} trust={deviceTrustScores[d.device_id]} />)
                   )}
                 </div>
               )}
@@ -826,9 +901,54 @@ export default function Dashboard() {
                         <span className="w-20">Action</span>
                         <span className="w-6">Risk</span>
                         <span>Event</span>
-                        <span>Account</span>
+                        <span className="flex-1">Account</span>
+                        <button
+                          onClick={() => exportCSV(decisions as unknown as Record<string, unknown>[], "ajna_audit_trail.csv")}
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold transition-colors"
+                        >
+                          <Download className="w-3 h-3" />
+                          Export CSV
+                        </button>
                       </div>
                       {decisions.map((d, i) => <DecisionRow key={d.case_id + i} entry={d} />)}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Risk Policies */}
+              {activeTab === "policies" && (
+                <div className="p-4">
+                  <p className="text-[11px] text-slate-500 mb-4">Toggle signals on/off. Changes take effect on the next evaluated event.</p>
+                  {policies.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-40 text-slate-500">
+                      <Settings className="w-10 h-10 mb-3 opacity-20" />
+                      <p className="text-sm">Loading policies…</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {policies.map(p => (
+                        <div key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${p.enabled ? "border-indigo-500/20 bg-indigo-500/5" : "border-slate-800 bg-slate-900/40 opacity-60"}`}>
+                          <button
+                            onClick={() => togglePolicy(p.id, !p.enabled)}
+                            className="shrink-0 transition-colors"
+                          >
+                            {p.enabled
+                              ? <ToggleRight className="w-5 h-5 text-indigo-400" />
+                              : <ToggleLeft className="w-5 h-5 text-slate-600" />}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-[12px] font-semibold text-slate-200">{p.name}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">{p.signal}</div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <span className={`text-[11px] font-bold tabular-nums ${p.score_delta >= 25 ? "text-rose-400" : p.score_delta >= 15 ? "text-amber-400" : "text-blue-400"}`}>
+                              +{p.score_delta}
+                            </span>
+                            <div className="text-[9px] text-slate-600 uppercase">pts</div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>

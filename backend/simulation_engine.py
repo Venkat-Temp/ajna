@@ -11,7 +11,7 @@ r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 executor = ThreadPoolExecutor(max_workers=4)
 
 
-def inject_event(event_type, user_id, device_id, device_flags=None, ip="49.x.x.x"):
+def inject_event(event_type, user_id, device_id, device_flags=None, ip="49.x.x.x", behavioral=None):
     if not device_flags:
         device_flags = {}
 
@@ -29,8 +29,12 @@ def inject_event(event_type, user_id, device_id, device_flags=None, ip="49.x.x.x
             "gps_spoofed": device_flags.get("gps_spoofed", False),
             "app_tamper": device_flags.get("app_tamper", False),
             "debug_mode": device_flags.get("debug_mode", False),
+            "app_cloned": device_flags.get("app_cloned", False),
+            "has_sensors": device_flags.get("has_sensors", True),
         }
     }
+    if behavioral:
+        event["behavioral"] = behavioral
     r.xadd('fraud_events', {'payload': json.dumps(event)})
     time.sleep(0.15)  # sequential arrival on dashboard
 
@@ -83,6 +87,26 @@ def run_scenario_sync(scenario: str):
         inject_event("wallet_transfer", base_user, base_device, flags)
         inject_event("payment_attempt", base_user, base_device, flags)
         inject_event("checkout", base_user, base_device, flags)
+
+    elif scenario == "bot_farm":
+        # Automated bot: uniform 150ms cadence, no sensors, app cloned
+        # Triggers: app_cloned (+25), no sensors (+10), bot timing (+20), emulator (+35) = FRAUD
+        bot_behavioral = {
+            "tap_cadence_variance": 2.5,
+            "interaction_count": 5,
+            "has_sensors": False,
+            "touch_pressure_avg": 0.0,
+            "touch_area_avg": 0.0,
+        }
+        flags = {"emulator": True, "app_cloned": True, "has_sensors": False}
+        for i in range(10):
+            inject_event("signup", f"{base_user}_bot_{i}", base_device, flags, behavioral=bot_behavioral)
+
+    elif scenario == "app_cloning_abuse":
+        # 5 accounts signing up from the same cloned app instance
+        # Triggers: app_cloned (+25) × each event → device farm via Neo4j
+        for i in range(5):
+            inject_event("signup", f"{base_user}_clone_{i}", base_device, {"app_cloned": True})
 
 
 @router.post("/run")
