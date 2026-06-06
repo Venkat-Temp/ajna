@@ -1,5 +1,6 @@
 import redis
 import json
+import logging
 import time
 import uuid
 import os
@@ -7,7 +8,9 @@ from google import genai
 from graph_engine import graph_engine
 from policy_engine import evaluate_policies
 
-r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+logger = logging.getLogger(__name__)
+
+r = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
 
 STREAM_KEY = 'fraud_events'
 GROUP_NAME = 'risk_evaluators'
@@ -20,10 +23,10 @@ REFERRAL_EVENTS = {'referral_claim', 'promo_redeem'}
 def setup_stream():
     try:
         r.xgroup_create(STREAM_KEY, GROUP_NAME, id='0', mkstream=True)
-        print(f"Created consumer group {GROUP_NAME} on stream {STREAM_KEY}")
+        logger.info("Created consumer group %s on stream %s", GROUP_NAME, STREAM_KEY)
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" in str(e):
-            print(f"Consumer group {GROUP_NAME} already exists.")
+            logger.info("Consumer group %s already exists.", GROUP_NAME)
         else:
             raise e
 
@@ -62,11 +65,6 @@ def evaluate_risk(event_data):
     policy_delta, policy_reasons = evaluate_policies(event_data)
     score += policy_delta
     reasons.extend(policy_reasons)
-
-    # has_sensors is not yet a configurable policy — scored directly
-    if device.get('has_sensors') is False:
-        score += 10
-        reasons.append("No hardware sensors (emulator or automated environment)")
 
     # ── High-Value Event on Risky Device (combo penalty) ─────────────────────
     device_is_risky = (device.get('rooted') or device.get('emulator')
@@ -231,7 +229,7 @@ def evaluate_risk(event_data):
                     f"{'Immediate action required to prevent financial loss.' if score >= 61 else 'Monitor closely for escalation.'}"
                 )
         except Exception as e:
-            print(f"Gemini error: {e}")
+            logger.error("Gemini error: %s", e)
             explanation = (
                 f"Risk signals detected: {', '.join(reasons[:3])}. "
                 f"Recommended: {recommended_action}."
@@ -259,7 +257,7 @@ def evaluate_risk(event_data):
 
 def start_worker():
     setup_stream()
-    print("Risk Engine started. Waiting for events...")
+    logger.info("Risk Engine started. Waiting for events...")
 
     while True:
         try:
@@ -270,21 +268,20 @@ def start_worker():
                     event_data = json.loads(message['payload'])
                     eid = event_data.get('event_id', 'unknown')
                     etype = event_data.get('event_type', 'unknown')
-                    print(f"Evaluating event: {eid} [{etype}]")
+                    logger.info("Evaluating event: %s [%s]", eid, etype)
 
                     risk_result = evaluate_risk(event_data)
-                    print(
-                        f"  → Score: {risk_result['risk_score']} "
-                        f"({risk_result['category']}) | "
-                        f"Action: {risk_result['recommended_action']} | "
-                        f"Reasons: {risk_result['reasons']}"
+                    logger.info(
+                        "Score: %s (%s) | Action: %s | Reasons: %s",
+                        risk_result['risk_score'], risk_result['category'],
+                        risk_result['recommended_action'], risk_result['reasons']
                     )
 
                     r.publish("risk_updates", json.dumps(risk_result))
                     r.xack(STREAM_KEY, GROUP_NAME, message_id)
 
         except Exception as e:
-            print(f"Error processing messages: {e}")
+            logger.error("Error processing messages: %s", e)
             time.sleep(1)
 
 

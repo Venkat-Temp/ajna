@@ -1,5 +1,8 @@
 from neo4j import GraphDatabase
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 NEO4J_URI = os.environ.get("NEO4J_URI", "bolt://localhost:7687")
 NEO4J_USER = os.environ.get("NEO4J_USER", "neo4j")
@@ -9,9 +12,19 @@ class GraphEngine:
     def __init__(self):
         try:
             self.driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+            self._ensure_indexes()
         except Exception as e:
-            print(f"Failed to connect to Neo4j: {e}")
+            logger.warning("Failed to connect to Neo4j: %s", e)
             self.driver = None
+
+    def _ensure_indexes(self):
+        try:
+            with self.driver.session() as session:
+                for label, prop in [("User", "id"), ("Device", "id"), ("IP", "address"), ("Email", "hash")]:
+                    session.run(f"CREATE INDEX IF NOT EXISTS FOR (n:{label}) ON (n.{prop})")
+            logger.info("Neo4j indexes ensured for User, Device, IP, Email")
+        except Exception as e:
+            logger.warning("Neo4j index creation failed: %s", e)
 
     def close(self):
         if self.driver:
@@ -44,7 +57,7 @@ class GraphEngine:
                 session.run(query, user_id=user_id, device_id=device_id,
                             ip_address=ip_address, email_hash=email_hash)
         except Exception as e:
-            print(f"Graph update error: {e}")
+            logger.error("Graph update error: %s", e)
 
     def get_graph_risk(self, user_id, device_id):
         if not self.driver:
@@ -99,7 +112,7 @@ class GraphEngine:
                             reasons.append("Email used by multiple accounts")
 
         except Exception as e:
-            print(f"Graph query error: {e}")
+            logger.error("Graph query error: %s", e)
 
         return risk_score, reasons
 
@@ -134,7 +147,7 @@ class GraphEngine:
                         risk_score += 15
                         reasons.append(f"IP subnet used by {subnet_user_count} accounts (subnet abuse)")
         except Exception as e:
-            print(f"Subnet query error: {e}")
+            logger.error("Subnet query error: %s", e)
 
         return risk_score, reasons
 

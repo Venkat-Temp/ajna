@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -26,18 +27,21 @@ object AjnaSDK {
         ingestionUrl = url
 
         val prefs = context.getSharedPreferences("ajna_prefs", Context.MODE_PRIVATE)
-        deviceId = prefs.getString("device_id_v2", null)?.takeIf { it.isNotBlank() } ?: run {
-            val computed = DeviceIntelligence.getPersistentDeviceId(context)
-            val id = if (!computed.isNullOrBlank()) {
-                computed
-            } else {
-                prefs.getString("device_id_uuid_fallback", null) ?: UUID.randomUUID().toString().also { uuid ->
-                    prefs.edit().putString("device_id_uuid_fallback", uuid).apply()
+        // Priority: AccountManager (factory-reset-resistant) → SharedPrefs → SHA-256 composite → UUID fallback
+        deviceId = DeviceIntelligence.getAccountManagerDeviceId(context)
+            ?: prefs.getString("device_id_v2", null)?.takeIf { it.isNotBlank() }
+            ?: run {
+                val computed = DeviceIntelligence.getPersistentDeviceId(context)
+                val id = if (!computed.isNullOrBlank()) {
+                    computed
+                } else {
+                    prefs.getString("device_id_uuid_fallback", null) ?: UUID.randomUUID().toString().also { uuid ->
+                        prefs.edit().putString("device_id_uuid_fallback", uuid).apply()
+                    }
                 }
+                prefs.edit().putString("device_id_v2", id).apply()
+                id
             }
-            prefs.edit().putString("device_id_v2", id).apply()
-            id
-        }
 
         isInitialized = true
         Log.i(TAG, "AjnaSDK initialized — Device ID: $deviceId")
@@ -51,7 +55,7 @@ object AjnaSDK {
             Log.e(TAG, "SDK not initialized. Call AjnaSDK.init() first.")
             return
         }
-        sendPayload(buildPayload(eventType, userId))
+        scope.launch { sendPayload(buildPayload(eventType, userId)) }
     }
 
     private fun buildPayload(eventType: String, userId: String): String {
@@ -68,22 +72,33 @@ object AjnaSDK {
         return payload.toString()
     }
 
-    private fun sendPayload(jsonPayload: String) {
-        scope.launch {
+    private suspend fun sendPayload(jsonPayload: String) {
+        var delayMs = 1000L
+        repeat(3) { attempt ->
             try {
                 val conn = URL(ingestionUrl).openConnection() as HttpURLConnection
+                conn.connectTimeout = 5_000
+                conn.readTimeout = 10_000
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("X-API-Key", apiKey)
                 conn.doOutput = true
                 conn.outputStream.use { it.write(jsonPayload.toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode
-                if (code in 200..299) Log.d(TAG, "Event ingested: $code")
-                else Log.e(TAG, "Ingestion failed: HTTP $code")
                 conn.disconnect()
+                if (code in 200..299) {
+                    Log.d(TAG, "Event ingested: $code")
+                    return
+                }
+                Log.e(TAG, "Ingestion failed: HTTP $code (attempt ${attempt + 1})")
             } catch (e: Exception) {
-                Log.e(TAG, "Exception sending event", e)
+                Log.e(TAG, "Exception sending event (attempt ${attempt + 1})", e)
+            }
+            if (attempt < 2) {
+                delay(delayMs)
+                delayMs *= 2
             }
         }
+        Log.e(TAG, "Event dropped after 3 failed attempts")
     }
 }

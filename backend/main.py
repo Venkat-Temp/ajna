@@ -1,9 +1,11 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Body, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 from collections import deque
 import json
+import logging
 import asyncio
 import time
 import hashlib
@@ -14,6 +16,13 @@ import os
 import redis.asyncio as redis_async
 import httpx
 from simulation_engine import router as sim_router
+from graph_engine import graph_engine as _graph_engine
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 try:
     import asyncpg
@@ -21,12 +30,15 @@ try:
 except ImportError:
     HAS_ASYNCPG = False
 
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
 app = FastAPI(title="Ajna", version="2.0.0")
-redis_client = redis_async.Redis(host='localhost', port=6379, db=0, decode_responses=True)
+redis_client = redis_async.Redis.from_url(REDIS_URL, decode_responses=True)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -103,7 +115,7 @@ async def _load_recent_cases(limit: int) -> list:
                 )
                 return [json.loads(r['data']) for r in reversed(rows)]
         except Exception as e:
-            print(f"DB load error: {e}")
+            logger.error("DB load error: %s", e)
     return list(cases_store.values())[-limit:]
 
 
@@ -122,7 +134,7 @@ async def _upsert_case(case_id: str, data: dict):
                     case_id, json.dumps(data), now
                 )
         except Exception as e:
-            print(f"DB upsert case error: {e}")
+            logger.error("DB upsert case error: %s", e)
 
 
 async def _insert_decision(decision_id: str, case_id: str, data: dict):
@@ -138,7 +150,7 @@ async def _insert_decision(decision_id: str, case_id: str, data: dict):
                     decision_id, case_id, json.dumps(data), time.time()
                 )
         except Exception as e:
-            print(f"DB insert decision error: {e}")
+            logger.error("DB insert decision error: %s", e)
 
 
 async def _check_rate_limit(ip: str, limit: int = 100, window: int = 60):
@@ -171,8 +183,8 @@ def read_root():
 @app.post("/api/v1/events")
 async def ingest_event(event: EventPayload, request: Request, _key=Depends(verify_api_key)):
     await _check_rate_limit(request.client.host)
-    await redis_client.xadd('fraud_events', {'payload': event.json()})
-    await manager.broadcast({"type": "NEW_EVENT", "data": event.dict()})
+    await redis_client.xadd('fraud_events', {'payload': event.model_dump_json()})
+    await manager.broadcast({"type": "NEW_EVENT", "data": event.model_dump()})
     return {"status": "received", "event_id": event.event_id}
 
 
@@ -243,7 +255,7 @@ async def get_decisions(limit: int = 100):
                 )
                 return {"decisions": [json.loads(r['data']) for r in rows]}
         except Exception as e:
-            print(f"DB decisions fetch error: {e}")
+            logger.error("DB decisions fetch error: %s", e)
     return {"decisions": list(reversed(decisions_log))[:limit]}
 
 
@@ -257,7 +269,7 @@ async def get_cases(limit: int = 200):
                 )
                 return {"cases": [json.loads(r['data']) for r in rows]}
         except Exception as e:
-            print(f"DB cases fetch error: {e}")
+            logger.error("DB cases fetch error: %s", e)
     return {"cases": list(cases_store.values())[-limit:]}
 
 
@@ -359,9 +371,9 @@ async def _deliver_webhooks(risk_data: dict):
                         headers={"Content-Type": "application/json", "X-Ajna-Signature": sig},
                     )
                     break
-                except Exception:
+                except Exception as e:
                     if attempt == 1:
-                        pass  # silently skip after 2 failures
+                        logger.error("Webhook delivery failed for %s after 2 attempts: %s", hook["url"], e)
 
 
 @app.get("/api/v1/webhooks")
@@ -401,7 +413,7 @@ async def provision_api_key(name: str):
 async def redis_listener():
     pubsub = redis_client.pubsub()
     await pubsub.subscribe("risk_updates")
-    print("Listening for risk updates...")
+    logger.info("Listening for risk updates...")
     async for message in pubsub.listen():
         if message["type"] == "message":
             risk_data = json.loads(message["data"])
@@ -447,14 +459,39 @@ async def startup_event():
                 await conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_decisions_case_id ON decisions(case_id)"
                 )
-            print("PostgreSQL connected — case/decision persistence enabled")
+            logger.info("PostgreSQL connected — case/decision persistence enabled")
         except Exception as e:
-            print(f"PostgreSQL unavailable ({e}) — using in-memory storage")
+            logger.warning("PostgreSQL unavailable (%s) — using in-memory storage", e)
             db_pool = None
     else:
-        print("asyncpg not installed — using in-memory storage")
+        logger.warning("asyncpg not installed — using in-memory storage")
 
     asyncio.create_task(redis_listener())
+
+
+@app.get("/health")
+async def health_check():
+    checks = {}
+    try:
+        await redis_client.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            checks["postgres"] = "ok"
+        except Exception as e:
+            checks["postgres"] = f"error: {e}"
+    else:
+        checks["postgres"] = "unavailable"
+    checks["neo4j"] = "ok" if _graph_engine.driver else "unavailable"
+    healthy = all(v == "ok" for v in checks.values())
+    return JSONResponse(
+        status_code=200 if healthy else 503,
+        content={"status": "healthy" if healthy else "degraded", "checks": checks},
+    )
 
 
 @app.websocket("/ws")
