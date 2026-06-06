@@ -74,7 +74,7 @@ object AjnaSDK {
                 val conn = URL(ingestionUrl).openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
-                conn.setRequestProperty("Authorization", "Bearer $apiKey")
+                conn.setRequestProperty("X-API-Key", apiKey)
                 conn.doOutput = true
                 conn.outputStream.use { it.write(jsonPayload.toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode

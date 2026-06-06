@@ -5,6 +5,7 @@ import uuid
 import os
 from google import genai
 from graph_engine import graph_engine
+from policy_engine import evaluate_policies
 
 r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
@@ -55,35 +56,14 @@ def evaluate_risk(event_data):
     device_id = event_data.get('device_id')
     event_type = event_data.get('event_type', '')
 
-    # ── Device Intelligence ───────────────────────────────────────────────────
-    if device.get('rooted'):
-        score += 30
-        reasons.append("Rooted device detected")
+    # ── Device Intelligence (policy-engine-driven) ────────────────────────────
+    # Scores and enables/disables are controlled via /api/v1/policies — toggling
+    # a policy in the dashboard takes effect immediately on the next event.
+    policy_delta, policy_reasons = evaluate_policies(event_data)
+    score += policy_delta
+    reasons.extend(policy_reasons)
 
-    if device.get('emulator'):
-        score += 35
-        reasons.append("Emulator/virtual device detected")
-
-    if device.get('vpn'):
-        score += 10
-        reasons.append("VPN/proxy active")
-
-    if device.get('gps_spoofed'):
-        score += 35
-        reasons.append("GPS location spoofed")
-
-    if device.get('app_tamper'):
-        score += 25
-        reasons.append("App integrity check failed (tampered)")
-
-    if device.get('debug_mode'):
-        score += 15
-        reasons.append("App running in debug mode")
-
-    if device.get('app_cloned'):
-        score += 25
-        reasons.append("App cloning / parallel space detected")
-
+    # has_sensors is not yet a configurable policy — scored directly
     if device.get('has_sensors') is False:
         score += 10
         reasons.append("No hardware sensors (emulator or automated environment)")

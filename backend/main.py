@@ -1,7 +1,8 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Body, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Header, Body, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
+from collections import deque
 import json
 import asyncio
 import time
@@ -9,6 +10,7 @@ import hashlib
 import hmac as hmaclib
 import secrets
 import uuid
+import os
 import redis.asyncio as redis_async
 import httpx
 from simulation_engine import router as sim_router
@@ -32,10 +34,13 @@ app.add_middleware(
 app.include_router(sim_router, prefix="/api/v1/scenarios")
 
 cases_store: dict = {}
-decisions_log: list = []
+decisions_log: deque = deque(maxlen=1000)  # capped; fallback only when PostgreSQL unavailable
 db_pool = None
 
-DB_DSN = "postgresql://fraud_admin:fraud_password@localhost:5432/postgres"
+DB_DSN = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://fraud_admin:fraud_password@localhost:5432/postgres"
+)
 
 
 class EventPayload(BaseModel):
@@ -136,6 +141,15 @@ async def _insert_decision(decision_id: str, case_id: str, data: dict):
             print(f"DB insert decision error: {e}")
 
 
+async def _check_rate_limit(ip: str, limit: int = 100, window: int = 60):
+    key = f"ratelimit:events:{ip}"
+    count = await redis_client.incr(key)
+    if count == 1:
+        await redis_client.expire(key, window)
+    if count > limit:
+        raise HTTPException(status_code=429, detail="Rate limit exceeded — max 100 requests/min per IP")
+
+
 async def verify_api_key(x_api_key: Optional[str] = Header(None)):
     if x_api_key is None:
         return None
@@ -155,7 +169,8 @@ def read_root():
 
 
 @app.post("/api/v1/events")
-async def ingest_event(event: EventPayload, _key=Depends(verify_api_key)):
+async def ingest_event(event: EventPayload, request: Request, _key=Depends(verify_api_key)):
+    await _check_rate_limit(request.client.host)
     await redis_client.xadd('fraud_events', {'payload': event.json()})
     await manager.broadcast({"type": "NEW_EVENT", "data": event.dict()})
     return {"status": "received", "event_id": event.event_id}
@@ -423,6 +438,15 @@ async def startup_event():
                         created_at DOUBLE PRECISION NOT NULL
                     )
                 """)
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_cases_created_at ON cases(created_at DESC)"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_decisions_created_at ON decisions(created_at DESC)"
+                )
+                await conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_decisions_case_id ON decisions(case_id)"
+                )
             print("PostgreSQL connected — case/decision persistence enabled")
         except Exception as e:
             print(f"PostgreSQL unavailable ({e}) — using in-memory storage")
