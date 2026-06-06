@@ -532,6 +532,7 @@ export default function Dashboard() {
   const trendBucket = useRef({ safe: 0, suspicious: 0, fraud: 0 });
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [deviceTrustScores, setDeviceTrustScores] = useState<Record<string, DeviceTrust>>({});
+  const [thresholds, setThresholds] = useState<Record<string, number>>({});
 
   // ── Derived state ────────────────────────────────────────────────────────────
 
@@ -632,6 +633,8 @@ export default function Dashboard() {
           setPendingAction(null);
         } else if (msg.type === "DECISION_LOGGED") {
           setDecisions(prev => [msg.data, ...prev].slice(0, 300));
+        } else if (msg.type === "THRESHOLD_UPDATED") {
+          setThresholds(msg.data);
         }
       };
     };
@@ -647,6 +650,14 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
+  // ── Fetch thresholds on mount ─────────────────────────────────────────────────
+  useEffect(() => {
+    fetch("http://localhost:8000/api/v1/thresholds")
+      .then(r => r.json())
+      .then(d => setThresholds(d.thresholds ?? {}))
+      .catch(() => {});
+  }, []);
+
   // ── Fetch device trust scores when devices tab is active ──────────────────────
   useEffect(() => {
     if (activeTab !== "devices") return;
@@ -658,6 +669,17 @@ export default function Dashboard() {
         .catch(() => {});
     });
   }, [activeTab, highRiskDevices]);
+
+  // ── Update a single threshold value ──────────────────────────────────────────
+  const updateThreshold = useCallback(async (key: string, value: number) => {
+    const updated = { ...thresholds, [key]: value };
+    setThresholds(updated);
+    await fetch("http://localhost:8000/api/v1/thresholds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [key]: value }),
+    }).catch(() => {});
+  }, [thresholds]);
 
   // ── Toggle policy enabled state ───────────────────────────────────────────────
   const togglePolicy = useCallback(async (policyId: string, enabled: boolean) => {
@@ -918,39 +940,82 @@ export default function Dashboard() {
 
               {/* Risk Policies */}
               {activeTab === "policies" && (
-                <div className="p-4">
-                  <p className="text-[11px] text-slate-500 mb-4">Toggle signals on/off. Changes take effect on the next evaluated event.</p>
-                  {policies.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-40 text-slate-500">
-                      <Settings className="w-10 h-10 mb-3 opacity-20" />
-                      <p className="text-sm">Loading policies…</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {policies.map(p => (
-                        <div key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${p.enabled ? "border-indigo-500/20 bg-indigo-500/5" : "border-slate-800 bg-slate-900/40 opacity-60"}`}>
-                          <button
-                            onClick={() => togglePolicy(p.id, !p.enabled)}
-                            className="shrink-0 transition-colors"
-                          >
-                            {p.enabled
-                              ? <ToggleRight className="w-5 h-5 text-indigo-400" />
-                              : <ToggleLeft className="w-5 h-5 text-slate-600" />}
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-[12px] font-semibold text-slate-200">{p.name}</div>
-                            <div className="text-[10px] text-slate-500 font-mono">{p.signal}</div>
+                <div className="p-4 space-y-5 overflow-y-auto" style={{ maxHeight: 680 }}>
+
+                  {/* Signal toggles */}
+                  <div>
+                    <p className="text-[11px] text-slate-500 mb-3">Toggle signals on/off. Changes take effect on the next evaluated event.</p>
+                    {policies.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-28 text-slate-500">
+                        <Settings className="w-8 h-8 mb-2 opacity-20" />
+                        <p className="text-xs">Loading policies…</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {policies.map(p => (
+                          <div key={p.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${p.enabled ? "border-indigo-500/20 bg-indigo-500/5" : "border-slate-800 bg-slate-900/40 opacity-60"}`}>
+                            <button onClick={() => togglePolicy(p.id, !p.enabled)} className="shrink-0">
+                              {p.enabled ? <ToggleRight className="w-5 h-5 text-indigo-400" /> : <ToggleLeft className="w-5 h-5 text-slate-600" />}
+                            </button>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[12px] font-semibold text-slate-200">{p.name}</div>
+                              <div className="text-[10px] text-slate-500 font-mono">{p.signal}</div>
+                            </div>
+                            <div className="shrink-0 text-right">
+                              <span className={`text-[11px] font-bold tabular-nums ${p.score_delta >= 25 ? "text-rose-400" : p.score_delta >= 15 ? "text-amber-400" : "text-blue-400"}`}>+{p.score_delta}</span>
+                              <div className="text-[9px] text-slate-600 uppercase">pts</div>
+                            </div>
                           </div>
-                          <div className="shrink-0 text-right">
-                            <span className={`text-[11px] font-bold tabular-nums ${p.score_delta >= 25 ? "text-rose-400" : p.score_delta >= 15 ? "text-amber-400" : "text-blue-400"}`}>
-                              +{p.score_delta}
-                            </span>
-                            <div className="text-[9px] text-slate-600 uppercase">pts</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Configurable thresholds */}
+                  {Object.keys(thresholds).length > 0 && (() => {
+                    const groups: { label: string; keys: string[] }[] = [
+                      { label: "Scoring Thresholds", keys: ["category_suspicious","category_fraud","action_challenge","action_block"] },
+                      { label: "OTP Velocity",        keys: ["otp_window_secs","otp_tier1_count","otp_tier1_delta","otp_tier2_count","otp_tier2_delta"] },
+                      { label: "Login Velocity",      keys: ["login_window_secs","login_tier1_count","login_tier1_delta","login_tier2_count","login_tier2_delta"] },
+                      { label: "Referral Velocity",   keys: ["referral_window_secs","referral_tier1_count","referral_tier1_delta","referral_tier2_count","referral_tier2_delta"] },
+                      { label: "Bot Detection",       keys: ["bot_cadence_variance_max","bot_timing_variance_max","bot_timing_avg_delta_max"] },
+                      { label: "Session Signals",     keys: ["session_window_secs","session_escalation_delta","session_repeat_delta","session_spike_delta"] },
+                    ];
+                    return (
+                      <div className="border-t border-slate-800 pt-4 space-y-4">
+                        <p className="text-[11px] text-slate-500">Edit scoring thresholds. Changes take effect on the next evaluated event.</p>
+                        {groups.map(g => (
+                          <div key={g.label}>
+                            <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">{g.label}</div>
+                            <div className="space-y-1">
+                              {g.keys.filter(k => k in thresholds).map(k => (
+                                <div key={k} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-900/60 border border-slate-800">
+                                  <span className="flex-1 text-[11px] font-mono text-slate-400">{k}</span>
+                                  <input
+                                    type="number"
+                                    defaultValue={thresholds[k]}
+                                    key={`${k}-${thresholds[k]}`}
+                                    onBlur={e => {
+                                      const v = parseFloat(e.target.value);
+                                      if (!isNaN(v) && v !== thresholds[k]) updateThreshold(k, v);
+                                    }}
+                                    className="w-20 text-right text-[11px] tabular-nums bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200 focus:outline-none focus:border-indigo-500"
+                                  />
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                        <button
+                          onClick={() => fetch("http://localhost:8000/api/v1/thresholds/reset", { method: "POST" }).then(r => r.json()).then(d => setThresholds(d.thresholds ?? {})).catch(() => {})}
+                          className="text-[11px] text-slate-500 hover:text-rose-400 transition-colors underline underline-offset-2"
+                        >
+                          Reset all to defaults
+                        </button>
+                      </div>
+                    );
+                  })()}
+
                 </div>
               )}
             </div>

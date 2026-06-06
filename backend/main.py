@@ -307,6 +307,30 @@ async def update_policy(policy_id: str, body: dict = Body(...)):
     raise HTTPException(status_code=404, detail="Policy not found")
 
 
+@app.get("/api/v1/thresholds")
+def get_thresholds_endpoint():
+    from threshold_engine import get_thresholds
+    return {"thresholds": get_thresholds()}
+
+
+@app.post("/api/v1/thresholds")
+async def update_thresholds(body: dict = Body(...)):
+    from threshold_engine import get_thresholds, save_thresholds
+    current = get_thresholds()
+    current.update({k: v for k, v in body.items() if k in current})
+    save_thresholds(current)
+    await manager.broadcast({"type": "THRESHOLD_UPDATED", "data": current})
+    return {"status": "ok", "thresholds": current}
+
+
+@app.post("/api/v1/thresholds/reset")
+async def reset_thresholds():
+    from threshold_engine import DEFAULT_THRESHOLDS, save_thresholds
+    save_thresholds(dict(DEFAULT_THRESHOLDS))
+    await manager.broadcast({"type": "THRESHOLD_UPDATED", "data": DEFAULT_THRESHOLDS})
+    return {"status": "ok", "thresholds": DEFAULT_THRESHOLDS}
+
+
 @app.get("/api/v1/reports/summary")
 async def get_report_summary():
     if db_pool:
