@@ -288,6 +288,12 @@ async def get_device_trust(device_id: str):
     }
 
 
+@app.get("/api/v1/graph/{device_id}")
+async def get_identity_graph(device_id: str):
+    data = await asyncio.to_thread(_graph_engine.get_identity_graph, device_id)
+    return data
+
+
 @app.get("/api/v1/policies")
 def get_policies_endpoint():
     from policy_engine import get_policies

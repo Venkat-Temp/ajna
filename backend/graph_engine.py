@@ -152,4 +152,64 @@ class GraphEngine:
         return risk_score, reasons
 
 
+    def get_identity_graph(self, device_id: str) -> dict:
+        """Return nodes + edges for the identity cluster around a device."""
+        if not self.driver:
+            return {"nodes": [], "edges": []}
+        nodes: dict = {}
+        edges: list = []
+        try:
+            with self.driver.session() as session:
+                nodes[device_id] = {"id": device_id, "type": "device", "label": device_id[:20]}
+
+                r = session.run(
+                    "MATCH (u:User)-[:LOGGED_IN_FROM]->(d:Device {id: $did}) RETURN u.id AS uid",
+                    did=device_id,
+                )
+                user_ids = [rec["uid"] for rec in r if rec["uid"]]
+                for uid in user_ids:
+                    nodes[uid] = {"id": uid, "type": "user", "label": uid[:20]}
+                    edges.append({"source": uid, "target": device_id})
+
+                if user_ids:
+                    r2 = session.run(
+                        "MATCH (u:User)-[:LOGGED_IN_FROM]->(d:Device) "
+                        "WHERE u.id IN $uids AND d.id <> $did "
+                        "RETURN u.id AS uid, d.id AS did2",
+                        uids=user_ids, did=device_id,
+                    )
+                    for rec in r2:
+                        d2 = rec["did2"]
+                        if d2 and d2 not in nodes:
+                            nodes[d2] = {"id": d2, "type": "device", "label": d2[:20]}
+                        if d2:
+                            edges.append({"source": rec["uid"], "target": d2})
+
+                r3 = session.run(
+                    "MATCH (d:Device {id: $did})-[:USED_IP]->(ip:IP) RETURN ip.address AS addr",
+                    did=device_id,
+                )
+                for rec in r3:
+                    addr = rec["addr"]
+                    if addr:
+                        nodes[addr] = {"id": addr, "type": "ip", "label": addr}
+                        edges.append({"source": device_id, "target": addr})
+
+                if user_ids:
+                    r4 = session.run(
+                        "MATCH (u:User)-[:USES_EMAIL]->(e:Email) WHERE u.id IN $uids "
+                        "RETURN u.id AS uid, e.hash AS h",
+                        uids=user_ids,
+                    )
+                    for rec in r4:
+                        h = rec["h"]
+                        if h and h not in nodes:
+                            nodes[h] = {"id": h, "type": "email", "label": h[:12] + "…"}
+                        if h:
+                            edges.append({"source": rec["uid"], "target": h})
+        except Exception as e:
+            logger.warning("Identity graph query failed: %s", e)
+        return {"nodes": list(nodes.values()), "edges": edges}
+
+
 graph_engine = GraphEngine()
