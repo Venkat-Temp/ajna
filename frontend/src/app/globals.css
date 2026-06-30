@@ -1,20 +1,189 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
+/* Enable class-based dark mode (next-themes toggles `.dark` on <html>) */
+@custom-variant dark (&:is(.dark *));
+
+/* ── Light theme ───────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --radius: 0.7rem;
+
+  --background: 214 33% 97%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 199 89% 43%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 32% 93%;
+  --secondary-foreground: 222 40% 20%;
+  --muted: 214 30% 93%;
+  --muted-foreground: 217 18% 41%;
+  --accent: 199 89% 92%;
+  --accent-foreground: 199 89% 26%;
+  --border: 214 32% 89%;
+  --input: 214 32% 87%;
+  --ring: 199 89% 43%;
+
+  /* AI / behavioral intelligence identity */
+  --ai: 263 70% 52%;
+  --ai-foreground: 0 0% 100%;
+
+  /* Risk semantics */
+  --safe: 160 84% 30%;
+  --safe-foreground: 0 0% 100%;
+  --suspicious: 32 95% 40%;
+  --suspicious-foreground: 0 0% 100%;
+  --fraud: 347 77% 50%;
+  --fraud-foreground: 0 0% 100%;
+
+  /* Chart palette: azure, emerald, amber, rose, violet */
+  --chart-1: 199 89% 43%;
+  --chart-2: 160 84% 34%;
+  --chart-3: 32 95% 44%;
+  --chart-4: 347 77% 52%;
+  --chart-5: 263 70% 55%;
+
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 222 30% 25%;
+
   color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ── Dark theme (primary "command console") ────────────────────────────── */
+.dark {
+  --background: 222 42% 6%;
+  --foreground: 213 33% 93%;
+  --card: 222 36% 11%;
+  --card-foreground: 213 33% 93%;
+  --popover: 221 34% 14%;
+  --popover-foreground: 213 33% 93%;
+  --primary: 199 92% 60%;
+  --primary-foreground: 222 47% 8%;
+  --secondary: 217 30% 18%;
+  --secondary-foreground: 213 33% 93%;
+  --muted: 220 28% 16%;
+  --muted-foreground: 217 17% 64%;
+  --accent: 217 38% 20%;
+  --accent-foreground: 199 92% 72%;
+  --border: 220 27% 19%;
+  --input: 220 25% 22%;
+  --ring: 199 92% 60%;
+
+  --ai: 255 90% 76%;
+  --ai-foreground: 255 60% 12%;
+
+  --safe: 160 64% 51%;
+  --safe-foreground: 160 70% 8%;
+  --suspicious: 43 96% 56%;
+  --suspicious-foreground: 43 90% 10%;
+  --fraud: 351 95% 71%;
+  --fraud-foreground: 351 80% 10%;
+
+  --chart-1: 199 92% 60%;
+  --chart-2: 160 64% 51%;
+  --chart-3: 43 96% 56%;
+  --chart-4: 351 95% 71%;
+  --chart-5: 255 90% 76%;
+
+  --sidebar: 222 45% 5%;
+  --sidebar-foreground: 214 25% 78%;
+
+  color-scheme: dark;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ── Map design tokens to Tailwind color utilities ─────────────────────── */
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-ai: hsl(var(--ai));
+  --color-ai-foreground: hsl(var(--ai-foreground));
+
+  --color-safe: hsl(var(--safe));
+  --color-safe-foreground: hsl(var(--safe-foreground));
+  --color-suspicious: hsl(var(--suspicious));
+  --color-suspicious-foreground: hsl(var(--suspicious-foreground));
+  --color-fraud: hsl(var(--fraud));
+  --color-fraud-foreground: hsl(var(--fraud-foreground));
+
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.5);
+    background-clip: padding-box;
+  }
+}
+
+/* ── Atmosphere: faint dot-grid backdrop for the "console" feel ─────────── */
+.bg-grid {
+  background-image: radial-gradient(hsl(var(--foreground) / 0.045) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  background-position: -11px -11px;
+}
+
+/* Soft top glow behind the main canvas */
+.bg-canvas {
+  background-image: radial-gradient(80% 60% at 50% -10%, hsl(var(--primary) / 0.06), transparent 70%);
+}
+
+/* Live "pulse" used on the WS status dot */
+@keyframes ajna-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.ajna-pulse { animation: ajna-pulse 1.6s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ajna-pulse { animation: none; }
 }

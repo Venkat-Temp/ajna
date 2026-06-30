@@ -161,14 +161,21 @@ Expected output: `Uvicorn running on http://0.0.0.0:8000`
 
 | Method | Endpoint | Purpose |
 |---|---|---|
-| `POST` | `/api/v1/events` | Ingest a device event |
+| `POST` | `/api/v1/events` | Ingest a device event (async, fire-and-forget) |
+| `POST` | `/api/v1/decide` | Real-time inline decisioning — returns a verdict (ALLOW/REVIEW/CHALLENGE/BLOCK) + trust score in the response |
+| `GET` | `/api/v1/entities/{type}/{id}/profile` | Learned behavioral baseline (+ trust history for devices) |
 | `POST` | `/api/v1/scenarios/run?scenario=<name>` | Trigger a simulation scenario |
 | `POST` | `/api/v1/cases/{case_id}/action` | Submit analyst decision (Allow/Monitor/Challenge/Block) |
+| `POST` | `/api/v1/cases/{case_id}/outcome` | Record ground-truth outcome (confirmed_fraud / false_positive / legit) — feeds the learning loop |
 | `GET` | `/api/v1/cases` | List all evaluated cases |
 | `GET` | `/api/v1/decisions` | Audit log of analyst decisions |
-| `WS` | `/ws` | WebSocket stream for real-time dashboard updates |
+| `GET` | `/api/v1/rings?min_accounts=<n>` | Fraud-ring detection (shared device/email hubs) |
+| `POST` | `/api/v1/copilot` | AI fraud-analyst copilot (grounded NL Q&A about a case) |
+| `GET` `POST` | `/api/v1/thresholds` | List / update configurable scoring thresholds |
+| `GET` | `/api/v1/reports/summary` | Aggregated stats (precision, exposure blocked, behavioral catches…) |
+| `WS` | `/ws` | WebSocket stream for real-time console updates |
 
-> **Note:** Case state and analyst decisions are held in-memory and reset when the server restarts. This is intentional for demo purposes.
+> **Note:** Cases/decisions are persisted to PostgreSQL when available, with an in-memory cache. If PostgreSQL is down the server falls back to in-memory only (resets on restart). The full endpoint list is in `CLAUDE.md` and the interactive docs at `/docs`.
 
 ---
 
@@ -180,40 +187,46 @@ npm install
 npm run dev
 ```
 
-Open the dashboard: **http://localhost:3000**
+Open the console: **http://localhost:3000** (the root `/` redirects to `/feed`).
 
-The connection indicator in the header turns **green** ("Live Stream Active") once the WebSocket connects to the backend. Opening the page while the backend is already running will replay the last 50 evaluated cases immediately so the dashboard is never empty on refresh.
+The connection indicator in the topbar turns **green** ("Live Stream Active") once the WebSocket connects to the backend. Opening the page while the backend is already running will replay the last 50 evaluated cases immediately so the console is never empty on refresh. The theme defaults to **dark**; toggle light/dark from the topbar.
 
-### Dashboard Layout
+### Console Layout
+
+The dashboard is a **multi-page fraud-ops console** with a persistent left sidebar (grouped Monitor / Investigate / Configure), a topbar (live KPIs, theme toggle, copilot button), and a global AI **copilot dock** + **entity drill-down dialog**.
 
 ```
-┌── Header ──────────────────────────────────────────────────────────┐
-│  Ajna                            [events · devices · accounts] [●] │
-├── 6 KPI Cards ──────────────────────────────────────────────────────┤
-│  Total · Safe · Suspicious · Fraud · Unique Devices · Unique Accounts│
-├── Left Panel ──┬── Center Panel (tabbed) ──────┬── Right Panel ─────┤
-│                │                               │                    │
-│  Simulation    │  [Live Risk Feed]             │  Device Telemetry  │
-│  Engine        │  [High-Risk Devices]          │  Stream            │
-│  (8 scenarios) │  [High-Risk Accounts]         │                    │
-│                │  [Audit Trail]                │  Raw event feed    │
-│  Risk Trend    │                               │  from all sources  │
-│  Chart (SVG)   │  Risk cards with:             │                    │
-│                │  • Categorised signals        │                    │
-│                │  • Gemini AI analysis         │                    │
-│                │  • Recommended action badge   │                    │
-│                │  • Analyst action buttons     │                    │
-└────────────────┴───────────────────────────────┴────────────────────┘
+┌── Sidebar ──┬── Topbar (KPIs · theme · copilot) ───────────────────┐
+│  Monitor    │                                                       │
+│   Live Feed │   <route content>                                     │
+│   Sessions  │                                                       │
+│   Devices   │   e.g. /feed → real-time risk cards with categorised  │
+│   Accounts  │         signals, Gemini analysis, recommended-action  │
+│  Investigate│         badge, analyst action + outcome-labeling      │
+│   Graph     │                                                       │
+│   Rings     │                                                       │
+│   Audit     │                                              [Copilot]│
+│  Configure  │                                              [ dock ] │
+│   Policies  │                                                       │
+│   Impact    │                                                       │
+└─────────────┴───────────────────────────────────────────────────────┘
 ```
 
-**Center panel tabs:**
+**Routes:**
 
-| Tab | Shows |
+| Route | Shows |
 |---|---|
-| **Live Risk Feed** | Every evaluated event as a risk card — pending or reviewed |
-| **High-Risk Devices** | Devices with risk score ≥ 31, with integrity flags, linked account count, top signals |
-| **High-Risk Accounts** | Accounts with risk score ≥ 31, with linked device count and risk history |
-| **Audit Trail** | Chronological log of every analyst decision (action, score, event type, account) |
+| `/feed` | **Live Risk Feed** — every evaluated event as a risk card (pending/reviewed), analyst actions, outcome labeling |
+| `/live` | **Session Monitor** — activity grouped by session |
+| `/devices` | Devices with risk score ≥ 31 — integrity flags, linked account count, top signals, trust badge |
+| `/accounts` | Accounts with risk score ≥ 31 — linked device count and risk history |
+| `/graph` | **Identity Graph** — interactive Neo4j cluster around a device (users / devices / IPs / emails) |
+| `/rings` | **Fraud Rings** — clusters of accounts converging on a shared device or email |
+| `/history` | **Audit Trail** — chronological log of every analyst decision, with CSV export |
+| `/policies` | **Risk Policies** — live enable/disable toggle per signal (broadcasts `POLICY_UPDATED`) |
+| `/impact` | **Impact** — report summary: detection precision, exposure blocked, behavioral catches |
+
+**Global tools:** the **Copilot** answers grounded natural-language questions about any case (signals, behavioral deviation, device history). Clicking an entity anywhere opens the **entity dialog** showing its learned behavioral baseline.
 
 ---
 
@@ -297,6 +310,40 @@ Every event payload includes the following device intelligence signals, collecte
 | `gps_spoofed` | Reads `Settings.Secure.ALLOW_MOCK_LOCATION` | Mock location injection is enabled |
 | `app_tamper` | Checks `PackageManager` installer source | App was not installed from the Play Store |
 | `debug_mode` | Checks `ApplicationInfo.FLAG_DEBUGGABLE` | App is running a debug build |
+| `app_cloned` | Inspects process name / data path for parallel-space packages | App is running in a clone/dual-space environment |
+| `fingerprint_tampered` | Compares hardware constants against the persisted fingerprint | Device hardware identifiers have been spoofed |
+
+### Behavioral Biometrics (Layer 1 → learned baseline)
+
+`BehavioralIntelligence` passively captures behavioral biometrics that the backend uses to learn each user's *normal* and flag deviation-from-self (possible account takeover). Wire these into your UI, then call `collectBehavioralTelemetry()` before `logEvent()`:
+
+```kotlin
+// In Activity.onCreate (or once per session): start passive motion capture
+AjnaSDK.init(this, "your-api-key", "http://10.0.2.2:8000/api/v1/events")  // starts motion capture
+
+// On user interactions:
+BehavioralIntelligence.recordTouchEvent(motionEvent)        // touch pressure / size / cadence
+BehavioralIntelligence.recordKeyEvent(downTimeMs, upTimeMs) // keystroke dwell + flight (no content)
+BehavioralIntelligence.recordSwipe(motionEvent)             // swipe velocity + path curvature
+BehavioralIntelligence.recordAction()                       // pacing of discrete actions
+
+// On Activity.onStop/onDestroy: release accelerometer + gyroscope listeners
+AjnaSDK.stopBehavioralCapture()
+```
+
+Captured features: touch cadence/pressure/size, keystroke dwell/flight, swipe velocity/curvature, device-motion (accelerometer + gyroscope variance), and session timing. No typed content or key identity is ever captured.
+
+### Attaching Business Context
+
+Pass free-form business context with any event so the engine can apply combo penalties, compute *exposure blocked*, and ground the copilot. **Never put PII here** — hash any identifiers first.
+
+```kotlin
+AjnaSDK.logEvent("payment_attempt", userId, mapOf(
+    "amount" to 4999,
+    "currency" to "USD",
+    "merchant_id" to "m_8842"
+))
+```
 
 ---
 
@@ -427,9 +474,13 @@ During a demo you can show the live Neo4j graph to visually reinforce the identi
 | App integrity check failed | +25 | SDK / device flags |
 | OTP brute-force (≥6 failures / 2 min) | +65 | Behavioral velocity |
 | Device linked to >5 accounts (farm) | +50 | Neo4j graph |
+| Behavior deviates from this user's baseline (≥3σ; +25 more at ≥6σ) | +35 → +60 | Learned behavioral baseline (Layer 2) |
+| Matches known-fraud behavioral signature (≥0.85 similar) | +30 | Learned known-fraud centroid (Layer 2) |
 | Debug mode active | +15 | SDK / device flags |
 | VPN active | +10 | SDK / device flags |
 | Referral abuse (≥5 claims / 5 min) | +45 | Behavioral velocity |
+
+> Signal weights are configurable at runtime via `POST /api/v1/thresholds` (and from the **Policies** page). See `backend/threshold_engine.py` for the full default set.
 
 ---
 
@@ -442,7 +493,8 @@ During a demo you can show the live Neo4j graph to visually reinforce the identi
 | "AI Explanation temporarily unavailable" | Check `GEMINI_API_KEY` is exported in the risk engine terminal |
 | Neo4j graph not updating | Check `NEO4J_PASSWORD` env var matches `fraud_password` |
 | Docker containers won't start | Ensure Docker Desktop is running first |
-| Cases/decisions gone after restart | Expected — case state is in-memory; re-run scenarios to repopulate |
+| Cases/decisions gone after restart | Cases persist to PostgreSQL when it's up; if the `fraud_postgres` container is down the server falls back to in-memory only and resets on restart — re-run scenarios to repopulate |
+| Copilot replies "Couldn't reach the copilot" | Ensure the FastAPI server is running and reachable at `localhost:8000`; check `GEMINI_API_KEY` for full (non-mock) answers |
 | Android Studio can't sync the SDK project | Ensure Android Studio version is Hedgehog 2023.1.1 or later; check internet access for Gradle download |
 | Demo app can't reach backend | Ensure the backend is running; emulator uses `10.0.2.2` for host machine's `localhost` |
 | Analyst action buttons stay loading | Check browser console — backend may have restarted and lost the case from memory |

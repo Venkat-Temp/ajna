@@ -17,6 +17,7 @@ import redis.asyncio as redis_async
 import httpx
 from simulation_engine import router as sim_router
 from graph_engine import graph_engine as _graph_engine
+import scoring
 
 logging.basicConfig(
     level=logging.INFO,
@@ -64,6 +65,8 @@ class EventPayload(BaseModel):
     ip: Optional[str] = None
     device: Optional[dict] = None
     network: Optional[dict] = None
+    behavioral: Optional[dict] = None  # touch/keystroke/motion biometrics from the SDK
+    context: Optional[dict] = None      # free-form business context (amount, merchant, reason, role…)
     email_hash: Optional[str] = None  # SHA-256 of email — never store plaintext
 
 
@@ -188,6 +191,53 @@ async def ingest_event(event: EventPayload, request: Request, _key=Depends(verif
     return {"status": "received", "event_id": event.event_id}
 
 
+async def _persist_and_broadcast_case(case: dict):
+    """Store + cache + broadcast a scored case (shared by the worker listener and /decide)."""
+    case_id = case.get("case_id")
+    if case_id:
+        cases_store[case_id] = case
+        await _upsert_case(case_id, case)
+        await redis_client.setex(f"cases:{case_id}", 300, json.dumps(case))
+    await manager.broadcast({"type": "RISK_UPDATE", "data": case})
+
+
+@app.post("/api/v1/decide")
+async def decide_event(event: EventPayload, request: Request, _key=Depends(verify_api_key)):
+    """Real-time decisioning (Layer 3): score in-request and return an inline verdict
+    the calling app branches on — ALLOW / REVIEW / CHALLENGE / BLOCK — plus a 0-1
+    trust score and the human-readable reasons. Unlike /events (fire-and-forget),
+    this blocks on scoring so the app can act before completing the action.
+    """
+    await _check_rate_limit(request.client.host)
+    decision = await asyncio.to_thread(scoring.decide, event.model_dump())
+    case = decision.pop("_case", None)
+    if case:
+        case["status"] = "pending"
+        await manager.broadcast({"type": "NEW_EVENT", "data": event.model_dump()})
+        await _persist_and_broadcast_case(case)
+    return decision
+
+
+@app.get("/api/v1/entities/{entity_type}/{entity_id}/profile")
+async def get_entity_profile(entity_type: str, entity_id: str):
+    """Intelligence API (Layer 2): the learned behavioral baseline + device-trust
+    history for an entity, so customers can pull intelligence into their own stack."""
+    if entity_type not in ("user", "device"):
+        raise HTTPException(status_code=400, detail="entity_type must be 'user' or 'device'")
+    behavioral = await asyncio.to_thread(scoring.get_behavioral_profile, entity_type, entity_id)
+    result = {"entity_type": entity_type, "entity_id": entity_id, "behavioral": behavioral}
+    if entity_type == "device":
+        trust = await redis_client.hgetall(f"trust:{entity_id}")
+        if trust:
+            result["trust"] = {
+                "trust_score": float(trust.get("trust_score", 50)),
+                "event_count": int(trust.get("event_count", 0)),
+                "fraud_count": int(trust.get("fraud_count", 0)),
+                "last_category": trust.get("last_category", "Unknown"),
+            }
+    return result
+
+
 @app.post("/api/v1/cases/{case_id}/action")
 async def submit_case_action(case_id: str, payload: ActionRequest):
     # Check in-memory first, then Redis cache, then DB
@@ -245,6 +295,69 @@ async def submit_case_action(case_id: str, payload: ActionRequest):
     return {"status": "ok", "case_id": case_id, "action": payload.action}
 
 
+async def _find_case(case_id: str) -> Optional[dict]:
+    case = cases_store.get(case_id)
+    if case:
+        return case
+    cached = await redis_client.get(f"cases:{case_id}")
+    if cached:
+        return json.loads(cached)
+    if db_pool:
+        try:
+            async with db_pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT data FROM cases WHERE case_id=$1", case_id)
+                if row:
+                    return json.loads(row['data'])
+        except Exception:
+            pass
+    return None
+
+
+class OutcomeRequest(BaseModel):
+    label: str                       # confirmed_fraud | false_positive | legit
+    source: str = "manual"           # chargeback | manual | rule | …
+    notes: Optional[str] = None
+
+
+@app.post("/api/v1/cases/{case_id}/outcome")
+async def submit_outcome(case_id: str, payload: OutcomeRequest):
+    """Feedback loop (Layer 3 → Layer 1/2): record the ground-truth outcome of a
+    case. A confirmed-fraud outcome degrades the device's trust reputation so future
+    activity on it scores higher — closing the loop that makes the system learn.
+    """
+    if payload.label not in ("confirmed_fraud", "false_positive", "legit"):
+        raise HTTPException(status_code=400, detail="label must be confirmed_fraud | false_positive | legit")
+    case = await _find_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    now = time.time()
+    case.update({"outcome": payload.label, "outcome_source": payload.source,
+                 "outcome_notes": payload.notes, "outcome_at": now})
+    cases_store[case_id] = case
+    await _upsert_case(case_id, case)
+    await redis_client.setex(f"cases:{case_id}", 300, json.dumps(case))
+
+    # Reinforce reputation + the known-fraud behavioral signature on confirmed fraud,
+    # so future activity matching it scores higher — closing the learning loop.
+    device_id = case.get("device_id")
+    if payload.label == "confirmed_fraud":
+        if device_id:
+            tkey = f"trust:{device_id}"
+            trust = await redis_client.hgetall(tkey)
+            if trust:
+                new_fraud = int(trust.get("fraud_count", 0)) + 1
+                new_score = min(round(0.5 * 100 + 0.5 * float(trust.get("trust_score", 50)), 2), 100)
+                await redis_client.hset(tkey, mapping={"fraud_count": new_fraud, "trust_score": new_score})
+                await redis_client.expire(tkey, 86400 * 30)
+        bio = case.get("behavioral_features")
+        if bio:
+            await asyncio.to_thread(scoring.record_known_bad_behavioral, bio)
+
+    await manager.broadcast({"type": "CASE_UPDATED", "data": case})
+    return {"status": "ok", "case_id": case_id, "outcome": payload.label}
+
+
 @app.get("/api/v1/decisions")
 async def get_decisions(limit: int = 100):
     if db_pool:
@@ -292,6 +405,14 @@ async def get_device_trust(device_id: str):
 async def get_identity_graph(device_id: str):
     data = await asyncio.to_thread(_graph_engine.get_identity_graph, device_id)
     return data
+
+
+@app.get("/api/v1/rings")
+async def get_fraud_rings(min_accounts: int = 3):
+    """Fraud-ring detection (Layer 2): clusters of accounts converging on a shared
+    device or email — the signature of device farms / coordinated abuse."""
+    rings = await asyncio.to_thread(_graph_engine.get_fraud_rings, min_accounts)
+    return {"rings": rings}
 
 
 @app.get("/api/v1/policies")
@@ -353,6 +474,9 @@ async def get_report_summary():
     by_category = {"Safe": 0, "Suspicious": 0, "Fraud": 0}
     by_action = {"Allow": 0, "Monitor": 0, "Challenge": 0, "Block": 0}
     signal_freq: dict = {}
+    outcomes = {"confirmed_fraud": 0, "false_positive": 0, "legit": 0, "unlabeled": 0}
+    exposure_blocked = 0.0      # money kept out of fraud's hands (Block/Challenge on high-risk)
+    behavioral_catches = 0      # cases where deviation-from-self was a material signal
 
     for c in cases:
         cat = c.get("category", "Safe")
@@ -364,13 +488,112 @@ async def get_report_summary():
         for reason in c.get("reasons", []):
             signal_freq[reason] = signal_freq.get(reason, 0) + 1
 
+        outcomes[c.get("outcome", "unlabeled")] = outcomes.get(c.get("outcome", "unlabeled"), 0) + 1
+
+        if act in ("Block", "Challenge"):
+            amt = (c.get("context") or {}).get("amount")
+            try:
+                exposure_blocked += float(amt)
+            except (TypeError, ValueError):
+                pass
+
+        if float(c.get("behavioral_sigma") or 0) >= 6.0:
+            behavioral_catches += 1
+
     top_signals = sorted(signal_freq.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Precision over labeled outcomes: of flagged cases we got an outcome for, how
+    # many were truly fraud? (confirmed_fraud / (confirmed_fraud + false_positive))
+    labeled = outcomes["confirmed_fraud"] + outcomes["false_positive"]
+    precision = round(outcomes["confirmed_fraud"] / labeled, 3) if labeled else None
+
     return {
         "total_events": total,
         "by_category": by_category,
         "by_recommended_action": by_action,
         "top_signals": [{"signal": s, "count": c} for s, c in top_signals],
+        "outcomes": outcomes,
+        "precision": precision,
+        "exposure_blocked": round(exposure_blocked, 2),
+        "behavioral_catches": behavioral_catches,
     }
+
+
+class CopilotRequest(BaseModel):
+    question: str
+    case_id: Optional[str] = None
+
+
+@app.post("/api/v1/copilot")
+async def fraud_copilot(payload: CopilotRequest):
+    """AI fraud-analyst copilot (Layer 3): answer natural-language questions about a
+    case/entity grounded in its risk signals, behavioral deviation, and trust history,
+    and recommend a next action. Falls back to a grounded heuristic answer if no key.
+    """
+    case = await _find_case(payload.case_id) if payload.case_id else None
+
+    evidence_lines = []
+    if case:
+        try:
+            evidence_lines.append(
+                f"Case {case.get('case_id')}: event_type={case.get('event_type')}, "
+                f"score={case.get('risk_score')}/100, category={case.get('category')}, "
+                f"recommended={case.get('recommended_action')}."
+            )
+            if case.get("reasons"):
+                evidence_lines.append("Signals: " + "; ".join(str(r) for r in case["reasons"]))
+            if case.get("behavioral_deviations"):
+                # Defensive: older cases may lack label/severity — use .get() throughout.
+                devs = "; ".join(
+                    f"{d.get('label', d.get('feature', 'behavior'))} "
+                    f"{d.get('severity', 'deviates from normal')} "
+                    f"(measured {d.get('observed', '?')} vs ~{d.get('baseline', '?')} typical, "
+                    f"{d.get('sigma', '?')}σ)"
+                    for d in case["behavioral_deviations"] if isinstance(d, dict)
+                )
+                if devs:
+                    evidence_lines.append(f"Behavioral deviation from this user's own baseline: {devs}")
+            if case.get("context"):
+                evidence_lines.append(f"Business context: {json.dumps(case['context'])}")
+            if case.get("device_id"):
+                trust = await redis_client.hgetall(f"trust:{case['device_id']}")
+                if trust:
+                    evidence_lines.append(
+                        f"Device history: {trust.get('event_count', 0)} events, "
+                        f"{trust.get('fraud_count', 0)} prior fraud, trust={trust.get('trust_score')}."
+                    )
+        except Exception as e:
+            logger.error("Copilot evidence build error: %s", e)
+    evidence = "\n".join(evidence_lines) or "No specific case supplied."
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if api_key:
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            prompt = (
+                "You are Ajna, an AI fraud-operations analyst. Using ONLY the evidence "
+                "below, answer the analyst's question concisely (max 4 sentences) and end "
+                "with a clear recommended action (Allow / Monitor / Challenge / Block) and why.\n\n"
+                f"EVIDENCE:\n{evidence}\n\nQUESTION: {payload.question}"
+            )
+            resp = await asyncio.to_thread(
+                lambda: client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+            )
+            return {"answer": resp.text.strip(), "grounded_on": case.get("case_id") if case else None}
+        except Exception as e:
+            logger.error("Copilot Gemini error: %s", e)
+
+    # Grounded fallback without an LLM key.
+    if case:
+        answer = (
+            f"[Mock copilot] This {case.get('category', 'event').lower()} case scored "
+            f"{case.get('risk_score')}/100. Key evidence: {'; '.join(case.get('reasons', [])[:3]) or 'none'}. "
+            f"Recommended action: {case.get('recommended_action', 'Monitor')}."
+        )
+    else:
+        answer = "[Mock copilot] No case_id supplied — provide one to get a grounded analysis."
+    return {"answer": answer, "grounded_on": case.get("case_id") if case else None}
 
 
 WEBHOOKS_KEY = "webhooks:registry"

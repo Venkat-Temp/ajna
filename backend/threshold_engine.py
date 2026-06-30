@@ -63,6 +63,18 @@ DEFAULT_THRESHOLDS = {
     "session_escalation_delta":  15,
     "session_repeat_delta":      20,
     "session_spike_delta":       10,
+
+    # Behavioral deviation-from-self (Layer 2 — learned per-user baseline)
+    "behavioral_min_samples":    5,    # observations needed before we trust a baseline
+    "behavioral_deviation_sigma": 3.0, # std-devs from the user's normal to flag (moderate)
+    "behavioral_deviation_delta": 35,  # score for a moderate deviation from self
+    "behavioral_severe_sigma":   6.0,  # std-devs that mean "this is not the same person"
+    "behavioral_severe_delta":   25,   # extra score on a severe deviation (35+25 → Challenge)
+
+    # Similarity-to-known-bad (learned fraud signatures from confirmed outcomes)
+    "known_bad_min_samples":     3,    # confirmed-fraud sessions needed before the centroid is usable
+    "known_bad_similarity_min":  0.85, # 0-1 closeness to the fraud centroid that flags
+    "known_bad_delta":           30,   # score added on a known-fraud behavioral match
 }
 
 

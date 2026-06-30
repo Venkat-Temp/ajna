@@ -44,21 +44,41 @@ object AjnaSDK {
             }
 
         isInitialized = true
+        // Begin passive device-handling motion capture (accelerometer + gyroscope) for the session.
+        // Listeners are unregistered in stopBehavioralCapture() to avoid leaks.
+        BehavioralIntelligence.startMotionCapture(appContext!!)
         Log.i(TAG, "AjnaSDK initialized — Device ID: $deviceId")
         logEvent("session_start", "anonymous")
     }
 
     fun getDeviceId(): String = deviceId
 
+    /**
+     * Stop passive behavioral sensor capture (call from Activity onStop/onDestroy to release the
+     * accelerometer + gyroscope listeners). Safe to call multiple times.
+     */
+    fun stopBehavioralCapture() {
+        BehavioralIntelligence.stopMotionCapture()
+    }
+
     fun logEvent(eventType: String, userId: String) {
+        logEvent(eventType, userId, null)
+    }
+
+    /**
+     * Log an event with optional free-form business context (e.g. amount, currency, merchant_id,
+     * referral_code). The context map is emitted under a top-level "context" key. Do NOT put PII
+     * (plaintext email/phone) here — hash any identifiers before adding them.
+     */
+    fun logEvent(eventType: String, userId: String, context: Map<String, Any>? = null) {
         if (!isInitialized) {
             Log.e(TAG, "SDK not initialized. Call AjnaSDK.init() first.")
             return
         }
-        scope.launch { sendPayload(buildPayload(eventType, userId)) }
+        scope.launch { sendPayload(buildPayload(eventType, userId, context)) }
     }
 
-    private fun buildPayload(eventType: String, userId: String): String {
+    private fun buildPayload(eventType: String, userId: String, context: Map<String, Any>?): String {
         val ctx = appContext ?: return "{}"
         val payload = JSONObject().apply {
             put("event_id", "evt_${UUID.randomUUID()}")
@@ -68,6 +88,9 @@ object AjnaSDK {
             put("timestamp", System.currentTimeMillis().toString())
             put("device", JSONObject(DeviceIntelligence.collectTelemetry(ctx)))
             put("behavioral", JSONObject(BehavioralIntelligence.collectBehavioralTelemetry()))
+            if (context != null) {
+                put("context", JSONObject(context))
+            }
         }
         return payload.toString()
     }

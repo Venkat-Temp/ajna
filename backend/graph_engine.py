@@ -152,6 +152,46 @@ class GraphEngine:
         return risk_score, reasons
 
 
+    def get_fraud_rings(self, min_accounts: int = 3, limit: int = 25) -> list:
+        """Detect fraud rings: hubs (a shared device or email) linked to >= min_accounts
+        distinct users. Each ring is a cluster of accounts converging on one identity
+        artifact — the signature of coordinated abuse / device farms / mule networks.
+        """
+        if not self.driver:
+            return []
+        rings = []
+        try:
+            with self.driver.session() as session:
+                dev = session.run(
+                    """
+                    MATCH (u:User)-[:LOGGED_IN_FROM]->(d:Device)
+                    WITH d, collect(DISTINCT u.id) AS accounts
+                    WHERE size(accounts) >= $min
+                    RETURN d.id AS hub, accounts ORDER BY size(accounts) DESC LIMIT $limit
+                    """,
+                    min=min_accounts, limit=limit,
+                )
+                for rec in dev:
+                    rings.append({"hub": rec["hub"], "hub_type": "device",
+                                  "accounts": rec["accounts"], "size": len(rec["accounts"])})
+
+                eml = session.run(
+                    """
+                    MATCH (u:User)-[:USES_EMAIL]->(e:Email)
+                    WITH e, collect(DISTINCT u.id) AS accounts
+                    WHERE size(accounts) >= $min
+                    RETURN e.hash AS hub, accounts ORDER BY size(accounts) DESC LIMIT $limit
+                    """,
+                    min=min_accounts, limit=limit,
+                )
+                for rec in eml:
+                    rings.append({"hub": rec["hub"], "hub_type": "email",
+                                  "accounts": rec["accounts"], "size": len(rec["accounts"])})
+        except Exception as e:
+            logger.error("Fraud ring query error: %s", e)
+        rings.sort(key=lambda x: x["size"], reverse=True)
+        return rings
+
     def get_identity_graph(self, device_id: str) -> dict:
         """Return nodes + edges for the identity cluster around a device."""
         if not self.driver:
